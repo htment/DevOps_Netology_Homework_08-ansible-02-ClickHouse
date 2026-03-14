@@ -1,0 +1,114 @@
+- name: Install ClickHouse
+  hosts: clickhouse
+  vars:
+    clickhouse_version: "25.10.6.36"
+
+  tasks:
+
+    - name: Download ClickHouse packages
+      ansible.builtin.get_url:
+        url: "https://packages.clickhouse.com/rpm/stable/{{ item }}"
+        dest: "{{ playbook_dir }}/../{{ item }}"
+        timeout: 10
+        mode: "0644"
+        force: no
+      delegate_to: localhost
+      loop:
+        - "clickhouse-common-static-{{ clickhouse_version }}.x86_64.rpm"
+        - "clickhouse-server-{{ clickhouse_version }}.x86_64.rpm"
+        - "clickhouse-client-{{ clickhouse_version }}.x86_64.rpm"
+
+    - name: Copy RPM packages to container
+      ansible.builtin.command:
+        cmd: >
+          docker cp {{ playbook_dir }}/../{{ item }}
+          {{ hostvars[inventory_hostname].ansible_host }}:/tmp/{{ item }}
+      delegate_to: localhost
+      loop:
+        - "clickhouse-common-static-{{ clickhouse_version }}.x86_64.rpm"
+        - "clickhouse-server-{{ clickhouse_version }}.x86_64.rpm"
+        - "clickhouse-client-{{ clickhouse_version }}.x86_64.rpm"
+
+    - name: Install ClickHouse packages inside container
+      ansible.builtin.command:
+        cmd: >
+          docker exec {{ hostvars[inventory_hostname].ansible_host }} bash -c "
+          rpm -ivh /tmp/clickhouse-common-static-{{ clickhouse_version }}.x86_64.rpm &&
+          rpm -ivh /tmp/clickhouse-server-{{ clickhouse_version }}.x86_64.rpm &&
+          rpm -ivh /tmp/clickhouse-client-{{ clickhouse_version }}.x86_64.rpm
+          "
+      delegate_to: localhost
+      register: rpm_install
+      failed_when: rpm_install.rc != 0 and rpm_install.rc != 1  # rc 1 если пакет уже установлен
+      changed_when: "'already installed' not in rpm_install.stderr"
+
+    - name: Create ClickHouse directories
+      ansible.builtin.command:
+        cmd: >
+          docker exec {{ hostvars[inventory_hostname].ansible_host }} bash -c "
+          mkdir -p /var/lib/clickhouse &&
+          mkdir -p /var/log/clickhouse-server &&
+          mkdir -p /var/run/clickhouse-server
+          "
+      delegate_to: localhost
+
+    - name: Start ClickHouse server
+      ansible.builtin.command:
+        cmd: >
+          docker exec {{ hostvars[inventory_hostname].ansible_host }}
+          /usr/bin/clickhouse server --daemon
+      delegate_to: localhost
+      register: clickhouse_start
+      failed_when: clickhouse_start.rc != 0
+
+    - name: Configure ClickHouse to listen on all interfaces
+      ansible.builtin.command:
+        cmd: >
+            docker exec {{ hostvars[inventory_hostname].ansible_host }} bash -c "
+            sed -i 's/<!-- <listen_host>0.0.0.0<\/listen_host> -->/<listen_host>0.0.0.0<\/listen_host>/' /etc/clickhouse-server/config.xml &&
+            sed -i '/<listen_host>::1<\/listen_host>/d' /etc/clickhouse-server/config.xml &&
+            sed -i '/<listen_host>127.0.0.1<\/listen_host>/d' /etc/clickhouse-server/config.xml
+            "
+      delegate_to: localhost
+
+    - name: Change ownership of ClickHouse directories to root
+      ansible.builtin.command:
+        cmd: >
+          docker exec {{ hostvars[inventory_hostname].ansible_host }} bash -c "
+          chown -R root:root /var/lib/clickhouse /var/log/clickhouse-server
+          "
+      delegate_to: localhost
+
+    - name: Stop ClickHouse server if running
+      ansible.builtin.command:
+        cmd: >
+          docker exec {{ hostvars[inventory_hostname].ansible_host }} bash -c "
+          pkill -f clickhouse 2>/dev/null || true
+          "
+      delegate_to: localhost
+      ignore_errors: yes
+
+    - name: Start ClickHouse server as root
+      ansible.builtin.command:
+        cmd: >
+          docker exec {{ hostvars[inventory_hostname].ansible_host }}
+          /usr/bin/clickhouse-server --daemon --config-file=/etc/clickhouse-server/config.xml
+      delegate_to: localhost
+      register: clickhouse_start
+      failed_when: clickhouse_start.rc != 0
+      
+
+    - name: Wait for ClickHouse port
+      wait_for:
+        host: "127.0.0.1"
+        port: 9000
+        delay: 5
+        timeout: 20
+      delegate_to: localhost
+
+    - name: Create logs database
+      ansible.builtin.command:
+        cmd: >
+          docker exec {{ hostvars[inventory_hostname].ansible_host }}
+          clickhouse-client -q "CREATE DATABASE IF NOT EXISTS logs"
+      delegate_to: localhost

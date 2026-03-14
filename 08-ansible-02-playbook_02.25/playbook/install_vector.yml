@@ -1,0 +1,88 @@
+- name: Install Vector
+  hosts: clickhouse
+  vars:
+    vector_version: "0.42.0"
+    vector_arch: "x86_64"
+    vector_package: "vector-{{ vector_version }}-1.{{ vector_arch }}.rpm"
+    vector_url: "https://packages.timber.io/vector/{{ vector_version }}/{{ vector_package }}"
+    vector_config_dir: "/etc/vector"
+    vector_data_dir: "/var/lib/vector"
+
+  tasks:
+    - name: Download Vector RPM package
+      ansible.builtin.get_url:
+        url: "{{ vector_url }}"
+        dest: "{{ playbook_dir }}/../{{ vector_package }}"
+        timeout: 30
+        mode: "0644"
+        force: no
+      delegate_to: localhost
+
+    - name: Copy Vector RPM to container
+      ansible.builtin.command:
+        cmd: >
+          docker cp {{ playbook_dir }}/../{{ vector_package }}
+          {{ hostvars[inventory_hostname].ansible_host }}:/tmp/{{ vector_package }}
+      delegate_to: localhost
+      changed_when: false
+
+    - name: Install Vector package inside container
+      ansible.builtin.command:
+        cmd: >
+          docker exec {{ hostvars[inventory_hostname].ansible_host }}
+          rpm -ivh /tmp/{{ vector_package }}
+      delegate_to: localhost
+      register: vector_install
+      failed_when: vector_install.rc != 0 and vector_install.rc != 1
+      changed_when: "'already installed' not in vector_install.stderr"
+
+    - name: Create Vector config directory inside container
+      ansible.builtin.command:
+        cmd: >
+          docker exec {{ hostvars[inventory_hostname].ansible_host }}
+          mkdir -p {{ vector_config_dir }}
+      delegate_to: localhost
+      changed_when: false
+
+    - name: Create Vector data directory inside container
+      ansible.builtin.command:
+        cmd: >
+          docker exec {{ hostvars[inventory_hostname].ansible_host }}
+          mkdir -p {{ vector_data_dir }}
+      delegate_to: localhost
+      changed_when: false
+
+    - name: Copy Vector config to container
+      ansible.builtin.command:
+        cmd: >
+          docker cp {{ playbook_dir }}/templates/vector.yml.j2
+          {{ hostvars[inventory_hostname].ansible_host }}:{{ vector_config_dir }}/vector.yml
+      delegate_to: localhost
+      notify: restart vector
+
+    - name: Stop Vector if running
+      ansible.builtin.shell:
+        cmd: docker exec {{ hostvars[inventory_hostname].ansible_host }} pkill -f vector || true
+      delegate_to: localhost
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Start Vector service
+      ansible.builtin.shell:
+        cmd: docker exec -d {{ hostvars[inventory_hostname].ansible_host }} vector --config {{ vector_config_dir }}/vector.yml
+      delegate_to: localhost
+      register: vector_start
+      changed_when: vector_start.rc == 0
+
+  handlers:
+    - name: restart vector
+      ansible.builtin.shell:
+        cmd: docker exec {{ hostvars[inventory_hostname].ansible_host }} pkill -f vector || true
+      delegate_to: localhost
+      changed_when: false
+
+    - name: start vector after restart
+      ansible.builtin.shell:
+        cmd: docker exec -d {{ hostvars[inventory_hostname].ansible_host }} vector --config {{ vector_config_dir }}/vector.yml
+      delegate_to: localhost
+      listen: "restart vector"

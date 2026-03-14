@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  container:
+    build:
+      context: .
+      dockerfile: Dockerfile_CENTOS
+      # args:
+      #   - DEBIAN_FRONTEND=noninteractive
+    image: centos
+    container_name: test-click-container
+    ports:
+      - "2230:22"
+      - "8123:8123"
+      - "8686:8686"
+      - "9000:9000"
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+    networks:
+      - art-network
+    volumes:
+      - art-data:/home/art
+      - ~/.ssh/id_ed25519.pub:/home/art/.ssh/authorized_keys:ro  # Добавьте эту строку
+
+    # Добавлено для явного указания команды, если нужно переопределить CMD из Dockerfile
+    # command: ["/usr/sbin/sshd", "-D", "-e"]
+
+#  clickhouse:
+#    image: clickhouse/clickhouse-server:latest
+#    container_name: clickhouse-server
+#    ports:
+#      - "8123:8123"
+#      - "9000:9000"
+#    environment:
+#      - CLICKHOUSE_USER=default
+#      - CLICKHOUSE_PASSWORD=123
+#    volumes:
+##      - ./playbook/clickhouse-config.xml:/etc/clickhouse-server/config.xml:ro
+#      - clickhouse-data:/var/lib/clickhouse
+#    restart: unless-stopped
+#    networks:
+#      - art-network
+
+volumes:
+  art-data:
+    driver: local
+  clickhouse-data:
+    driver: local
+
+networks:
+  art-network:
+    driver: bridge

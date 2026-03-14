@@ -1,0 +1,55 @@
+FROM quay.io/centos/centos:stream9
+
+# Отключаем интерактивный режим
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Устанавливаем необходимые пакеты
+RUN dnf update -y && \
+    dnf install -y \
+        wget \
+        curl-minimal \
+        net-tools \
+        iputils \
+        openssh-server \
+        sudo \
+        && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf/*
+
+# Создаем директорию для SSH
+RUN mkdir /var/run/sshd
+
+# Генерируем хостовые ключи SSH
+RUN ssh-keygen -A
+
+# Создаем пользователя art с паролем 123
+RUN useradd -m -s /bin/bash art && \
+    echo 'art:123' | chpasswd && \
+    usermod -aG wheel art
+
+# Настраиваем sudo для группы wheel
+RUN echo "%wheel ALL=(ALL) ALL" >> /etc/sudoers
+
+# Настраиваем SSH для авторизации по паролю и ключам
+RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/#PermitEmptyPasswords no/PermitEmptyPasswords no/' /etc/ssh/sshd_config && \
+    sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/#AuthorizedKeysFile/AuthorizedKeysFile/' /etc/ssh/sshd_config
+
+# Создаем директорию для SSH ключей пользователя
+RUN mkdir -p /home/art/.ssh && \
+    chmod 700 /home/art/.ssh && \
+    touch /home/art/.ssh/authorized_keys && \
+    chmod 600 /home/art/.ssh/authorized_keys && \
+    chown -R art:art /home/art/.ssh
+
+# Открываем порт для SSH
+EXPOSE 22 8123 9000
+
+# Запускаем SSH сервер в foreground режиме
+CMD ["/usr/sbin/sshd", "-D", "-e"]
+
+RUN dnf install -y nano \
+    procps-ng \
+    vim \
+    && dnf clean all

@@ -1,0 +1,22 @@
+# Simple Vector configuration
+data_dir: /var/lib/vector
+
+
+api:
+  enabled: true
+  address: "0.0.0.0:8686"  # Порт для API и UI
+  playground: true  # Включает GraphQL playground
+
+
+sources:
+  dummy_source:
+    type: "demo_logs"
+    format: "syslog"
+    interval: 1
+
+sinks:
+  stdout_sink:
+    type: "console"
+    inputs: ["dummy_source"]
+    encoding:
+      codec: "json"
